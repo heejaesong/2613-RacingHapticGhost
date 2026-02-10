@@ -1,14 +1,15 @@
 import vgamepad as vg
 import serial
-import time 
+import time
 
 # 1. Initialize the Virtual Xbox 360 Controller
 gamepad = vg.VX360Gamepad()
 
 # 2. Setup Serial (Ensure your Arduino is plugged in and Serial Monitor is CLOSED)
 # Replace 'COM3' with your actual port
+print("Script started")
 try:
-    ser = serial.Serial('COM5', 115200, timeout=0.01)
+    ser = serial.Serial('COM4', 115200, timeout=0.01)
     print("Successfully connected to Arduino.")
 except Exception as e:
     print(f"Could not connect: {e}")
