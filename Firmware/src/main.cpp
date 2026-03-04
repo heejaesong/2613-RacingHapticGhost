@@ -1,26 +1,57 @@
+// #include <Arduino.h>
+
+// void setup() {
+//   Serial.begin(115200);
+// }
+
+// float steering = 0;
+// float throttle = 0;
+// float brake = 0;
+
+// char buffer [64];
+// int bufferIndex = 0;
+
+
+// void loop() {
+
+//   // Send data to PC: "Steering,Accel"
+//   // Example output: "512,0"
+//   while(Serial.available()) {
+//     char c = Serial.read();
+
+//       if (c == '\n') {
+//         buffer[bufferIndex] = '\0';
+        
+//         if (sscanf(buffer, "%f,%f,%f", &steering, &throttle, &brake) == 3) {
+//           Serial.print("Steer: ");
+//           Serial.print(steering);
+//           Serial.print("  Throttle: ");
+//           Serial.print(throttle);
+//           Serial.print("  Brake: ");
+//           Serial.println(brake);
+//         }
+
+//         bufferIndex = 0;
+//       } else {
+//         if (bufferIndex < sizeof(buffer) - 1) {
+//           buffer[bufferIndex++] = c;
+//         }
+//       }
+
+//   }
+//   delay(10);
+// }
 #include <Arduino.h>
 
-const int steeringPin = A0; 
-const int accelPin = A1;
+#define LED_PIN 2 // Most ESP32 DevKits use GPIO 2
 
 void setup() {
-  Serial.begin(115200);
+  pinMode(LED_PIN, OUTPUT); // Set the LED pin as output
 }
 
 void loop() {
-// Read analog values (0 to 1023)
-  int steeringVal = analogRead(steeringPin);
-  int accelVal = analogRead(accelPin);
-
-  // Send data to PC: "Steering,Accel"
-  // Example output: "512,0"
-  Serial.print(steeringVal);
-  Serial.print(",");
-  Serial.println(accelVal);
-
-  // Small delay to prevent flooding the Serial buffer
-  // 10ms = 100Hz update rate, plenty for testing
-  delay(10);
+  digitalWrite(LED_PIN, HIGH); // Turn the LED on
+  delay(1000);                 // Wait for 1000ms (1 second)
+  digitalWrite(LED_PIN, LOW);  // Turn the LED off
+  delay(1000);                 // Wait for 1000ms (1 second)
 }
-
-
