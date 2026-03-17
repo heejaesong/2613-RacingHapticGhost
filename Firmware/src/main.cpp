@@ -1,57 +1,38 @@
-// #include <Arduino.h>
+/*
+  Blink
 
-// void setup() {
-//   Serial.begin(115200);
-// }
+  Turns an LED on for one second, then off for one second, repeatedly.
 
-// float steering = 0;
-// float throttle = 0;
-// float brake = 0;
+  Most Arduinos have an on-board LED you can control. On the UNO, MEGA and ZERO
+  it is attached to digital pin 13, on MKR1000 on pin 6. LED_BUILTIN is set to
+  the correct LED pin independent of which board is used.
+  If you want to know what pin the on-board LED is connected to on your Arduino
+  model, check the Technical Specs of your board at:
+  https://docs.arduino.cc/hardware/
 
-// char buffer [64];
-// int bufferIndex = 0;
+  modified 8 May 2014
+  by Scott Fitzgerald
+  modified 2 Sep 2016
+  by Arturo Guadalupi
+  modified 8 Sep 2016
+  by Colby Newman
 
+  This example code is in the public domain.
 
-// void loop() {
-
-//   // Send data to PC: "Steering,Accel"
-//   // Example output: "512,0"
-//   while(Serial.available()) {
-//     char c = Serial.read();
-
-//       if (c == '\n') {
-//         buffer[bufferIndex] = '\0';
-        
-//         if (sscanf(buffer, "%f,%f,%f", &steering, &throttle, &brake) == 3) {
-//           Serial.print("Steer: ");
-//           Serial.print(steering);
-//           Serial.print("  Throttle: ");
-//           Serial.print(throttle);
-//           Serial.print("  Brake: ");
-//           Serial.println(brake);
-//         }
-
-//         bufferIndex = 0;
-//       } else {
-//         if (bufferIndex < sizeof(buffer) - 1) {
-//           buffer[bufferIndex++] = c;
-//         }
-//       }
-
-//   }
-//   delay(10);
-// }
+  https://docs.arduino.cc/built-in-examples/basics/Blink/
+*/
 #include <Arduino.h>
 
-#define LED_PIN 2 // Most ESP32 DevKits use GPIO 2
-
+// the setup function runs once when you press reset or power the board
 void setup() {
-  pinMode(LED_PIN, OUTPUT); // Set the LED pin as output
+  // initialize digital pin LED_BUILTIN as an output.
+  pinMode(2, OUTPUT);
 }
 
+// the loop function runs over and over again forever
 void loop() {
-  digitalWrite(LED_PIN, HIGH); // Turn the LED on
-  delay(1000);                 // Wait for 1000ms (1 second)
-  digitalWrite(LED_PIN, LOW);  // Turn the LED off
-  delay(1000);                 // Wait for 1000ms (1 second)
+  digitalWrite(2, HIGH);  // turn the LED on (HIGH is the voltage level)
+  delay(1000);                      // wait for a second
+  digitalWrite(2, LOW);   // turn the LED off by making the voltage LOW
+  delay(1000);                      // wait for a second
 }
