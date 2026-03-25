@@ -1,5 +1,5 @@
 /*
-Student MCU Arduino code.
+Student MCU firmware.
 */
 
 #include <Arduino.h>
@@ -8,28 +8,45 @@ Student MCU Arduino code.
 #include <ACAN2517FD.h>
 #include <Moteus.h>
 
-// If true: use incoming encoder positions as position commands
-// If false: stop motors (but still read encoders)
-static constexpr bool kEnableFollow = true;
+#define STEERING_WHEEL_ID 1
+#define ACCEL_PEDAL_ID    6
+#define BRAKE_PEDAL_ID    99 // TODO: Set to ID of the other Moteus controller
 
-// Note that the CAN adapter oscillator must match the MCP2517FD board or whatever is selected (currently set to 20MHz placeholder)
+#define STEER_CENTRE      -0.3f
+#define TEACH_VAL_TO_REVS 110.0f / 360.0f
+
+// Increasing limits further leads to possibility of overshoot
+#define VELOCITY_LIM     3.0f
+#define ACCELERATION_LIM 6.0f
+
+#define CONTROL_LOOP_MS 10
+
+#define RX_TIMEOUT_MS 200
+
+// Will not work if not set to 40MHz (characteristic of the SPI to CAN-FD adapter)
 static constexpr ACAN2517FDSettings::Oscillator kCanOsc =
   ACAN2517FDSettings::OSC_40MHz;
 
 // SPI pins:
-static constexpr int PIN_SPI_SCK = 12;
-static constexpr int PIN_SPI_MOSI = 11;
-static constexpr int PIN_SPI_MISO = 13;
+static constexpr int PIN_SPI_SCK = 12;   // Clock
+static constexpr int PIN_SPI_MOSI = 11;  // TX/SDI
+static constexpr int PIN_SPI_MISO = 13;  // RX/SDO
 
 // MCP2517FD pins:
-static constexpr int PIN_CAN_CS = 10;  // Chip select
-static constexpr int PIN_CAN_INT = 9;  // Interrupt from MCP2517FD
+static constexpr int PIN_CAN_CS = 10;   // Chip select
+static constexpr int PIN_CAN_INT = 9;   // Interrupt from MCP2517FD
 
-// UART link FROM the first ESP32-S3
-static constexpr int PIN_UART_RX = 17;  // Student RX <- Teacher TX
-static constexpr int PIN_UART_TX = 18;  // Student TX -> Teacher RX (not needed)
-static constexpr uint32_t UART_BAUD = 921600;
+// Serial comms with laptop
+static char lineBuf[96];
+static size_t lineLen = 0;
 
+// Holds the most recently received teacher inputs
+static float latest_steer = 0.0f;
+static float latest_accel   = 0.0f;
+static float latest_brake   = 0.0f;
+static bool  have_input   = false;
+
+// TODO: Remove these testing variables once ready
 static bool forward = true;
 static uint32_t lastToggle = 0;
 
@@ -38,73 +55,48 @@ ACAN2517FD can(PIN_CAN_CS, SPI, PIN_CAN_INT);
 
 Moteus steering_wheel(can, []() {
   Moteus::Options o;
-  o.id = 6;
+  o.id = STEERING_WHEEL_ID;
   return o;
 }());
 Moteus accel_pedal(can, []() {
   Moteus::Options o;
-  o.id = 5;
+  o.id = ACCEL_PEDAL_ID;
   return o;
 }());
 Moteus brake_pedal(can, []() {
   Moteus::Options o;
-  o.id = 4;
+  o.id = BRAKE_PEDAL_ID;
   return o;
 }());
 
-Moteus::PositionMode::Command cmd;
-Moteus::PositionMode::Format fmt;
+Moteus::PositionMode::Command sw_cmd;
+Moteus::PositionMode::Format sw_fmt;
 
-HardwareSerial UartLink(1);
+Moteus::PositionMode::Command acl_cmd;
+Moteus::PositionMode::Format acl_fmt;
 
-// UART line parser
-static char lineBuf[256];
-static size_t lineLen = 0;
+Moteus::PositionMode::Command brk_cmd;
+Moteus::PositionMode::Format brk_fmt;
 
+static bool parseTeacherInputs(const char* s, float &steer, float &accel, float &brake)
+{
+  char* end = nullptr;
 
-// TODO: Modify this to work with Heejae's sending format
-static bool parseIncoming(const char *s, float &p1, float &p2, float &p3) {
-  int field = 0;
-  const char *start = s;
+  steer = strtof(s, &end);
+  if (!end || *end != ',')
+    return false;
 
-  float vals[4] = { 0 };  // t, p1, p2, p3
+  accel = strtof(end + 1, &end);
+  if (!end || *end != ',')
+    return false;
 
-  while (*s) {
-    if (*s == ',' || *s == '\n' || *s == '\r') {
-      if (field < 4) {
-        char tmp[32];
-        size_t n = (size_t)(s - start);
-        if (n >= sizeof(tmp)) n = sizeof(tmp) - 1;
-        memcpy(tmp, start, n);
-        tmp[n] = '\0';
-        vals[field] = (float)atof(tmp);
-      }
-      field++;
-      if (*s == ',') start = s + 1;
-    }
-    s++;
-  }
+  brake = strtof(end + 1, &end);
 
-  // Parse the final token if needed.
-  if (field < 4 && *start) {
-    char tmp[32];
-    size_t n = strlen(start);
-    if (n >= sizeof(tmp)) n = sizeof(tmp) - 1;
-    memcpy(tmp, start, n);
-    tmp[n] = '\0';
-    vals[field] = (float)atof(tmp);
-    field++;
-  }
-
-  if (field < 4) return false;
-
-  p1 = vals[1];
-  p2 = vals[2];
-  p3 = vals[3];
   return true;
 }
 
-static void SetupCan() {
+static void setupCan()
+{
   SPI.begin(PIN_SPI_SCK, PIN_SPI_MISO, PIN_SPI_MOSI, PIN_CAN_CS);
 
   ACAN2517FDSettings settings(
@@ -120,64 +112,74 @@ static void SetupCan() {
   const uint32_t err = can.begin(settings, [] {
     can.isr();
   });
-  if (err != 0) {
+  if (err != 0)
+  {
     Serial.print("CAN begin failed, err=0x");
     Serial.println(err, HEX);
-    while (1) delay(1000);
+    while (1)
+      delay(1000);
   }
 }
 
-static void setupMoteusFormat() {
-  fmt.velocity_limit = Moteus::kFloat;
-  fmt.accel_limit = Moteus::kFloat;
+static void setupMoteusFormat()
+{
+  sw_fmt.velocity_limit = Moteus::kFloat;
+  sw_fmt.accel_limit = Moteus::kFloat;
 
-  cmd.velocity_limit = 5.0f;
-  cmd.accel_limit = 20.0f;
+  sw_cmd.velocity_limit = VELOCITY_LIM;
+  sw_cmd.accel_limit = ACCELERATION_LIM;
+
+  acl_fmt.velocity_limit = Moteus::kFloat;
+  acl_fmt.accel_limit = Moteus::kFloat;
+
+  acl_cmd.velocity_limit = VELOCITY_LIM;
+  acl_cmd.accel_limit = ACCELERATION_LIM;
+
+  brk_fmt.velocity_limit = Moteus::kFloat;
+  brk_fmt.accel_limit = Moteus::kFloat;
+
+  brk_cmd.velocity_limit = VELOCITY_LIM;
+  brk_cmd.accel_limit = ACCELERATION_LIM;
 }
 
-static void commandPosition(float p1) {
-  if (!kEnableFollow) {
-    steering_wheel.SetStop();
-    // accel_pedal.SetStop();
-    // brake_pedal.SetStop();
-    return;
-  }
-
-  cmd.position = p1;
-  steering_wheel.SetPosition(cmd, &fmt);
+static void commandPositions(float sw_pos)
+{
+  sw_cmd.position = STEER_CENTRE + sw_pos;
+  steering_wheel.SetPosition(sw_cmd, &sw_fmt);
   // cmd.position = p2;
-  // accel_pedal.SetPosition(cmd, &fmt);
+  // accel_pedal.SetPosition(acl_cmd, &acl_fmt);
   // cmd.position = p3;
-  // brake_pedal.SetPosition(cmd, &fmt);
+  // brake_pedal.SetPosition(brk_cmd, &brk_fmt);
 }
 
-static void printLocalEncoders() {
+static void printLocalEncoders()
+{
   const auto &a = steering_wheel.last_result().values;
   const auto &b = accel_pedal.last_result().values;
   const auto &c = brake_pedal.last_result().values;
 
-  // Serial.print("local_pos: ");
-  // Serial.print(a.position, 6);
-  // Serial.print(", ");
-  // Serial.print(b.position, 6);
-  // Serial.print(", ");
-  // Serial.print(c.position, 6);
-  // Serial.println();
+  Serial.print("STEERING WHEEL: mode="); Serial.print((int)a.mode);
+  Serial.print(" pos="); Serial.print(a.position);
+  Serial.print(" fault="); Serial.println((int)a.fault);
 
-  Serial.print("m4 mode="); Serial.print((int)a.mode);
-  Serial.print(" pos="); Serial.println(a.position);
+  // TODO: Uncomment based on which motors are being controlled
+  // Serial.print("ACCEL PEDAL: mode="); Serial.print((int)b.mode);
+  // Serial.print(" pos="); Serial.print(b.position);
+  // Serial.print(" fault="); Serial.println((int)b.fault);
+
+  // Serial.print("BRAKE PEDAL: mode="); Serial.print((int)c.mode);
+  // Serial.print(" pos="); Serial.print(c.position);
+  // Serial.print(" fault="); Serial.println((int)c.fault);
 
   Serial.println();
 }
 
-void setup() {
+void setup()
+{
   Serial.begin(115200);
   delay(200);
 
-  // UART from leader ESP32
-  // UartLink.begin(UART_BAUD, SERIAL_8N1, PIN_UART_RX, PIN_UART_TX);
-
-  SetupCan();
+  setupCan();
   setupMoteusFormat();
 
   steering_wheel.SetStop();
@@ -187,52 +189,72 @@ void setup() {
   brake_pedal.SetStop();
   delay(20);
 
-  Serial.println("Follower started: UART in -> CAN-FD position commands.");
+  Serial.println("Setup complete");
 }
 
-void loop() {
-  // Read UART bytes and build lines
-  // while (UartLink.available()) {
-  //   char c = (char)UartLink.read();
+void loop()
+{
+  // Read serial data from laptop as quick as possible
+  static uint32_t last_rx_ms = 0;
+  while (Serial.available())
+  {
+    char c = (char)Serial.read();
 
-  //   if (c == '\n') {
-  //     lineBuf[lineLen] = '\0';
+    if (c == '\n') {
+      lineBuf[lineLen] = '\0';
+      lineLen = 0;
 
-  //     float p1 = 0, p2 = 0, p3 = 0;
-  //     if (parseIncoming(lineBuf, p1, p2, p3)) {
-  //       commandPosition(p1, p2, p3);
-  //     }
-
-  //     lineLen = 0;  // reset for next line
-  //   } else {
-  //     if (lineLen < sizeof(lineBuf) - 1) {
-  //       lineBuf[lineLen++] = c;
-  //     } else {
-  //       // overflow; reset
-  //       lineLen = 0;
-  //     }
-  //   }
-  // }
-
-
-  // Testing
-  // commandPosition(1);
-  // delay(400);
-  // printLocalEncoders();
-
-  // commandPosition(0);
-  // delay(400);
-  // printLocalEncoders();
-
-
-  // More testing
-  if (millis() - lastToggle > 750) {
-    forward = !forward;
-    lastToggle = millis();
-    printLocalEncoders();
+      float steer, accel, brake;
+      if (parseTeacherInputs(lineBuf, steer, accel, brake))
+      {
+        latest_steer = steer;
+        latest_accel = accel;
+        latest_brake = brake;
+        have_input = true;
+        last_rx_ms = millis();
+      }
+    }
+    else if (c != '\r')
+    {
+      if (lineLen < sizeof(lineBuf) - 1)
+        lineBuf[lineLen++] = c;
+      else
+        lineLen = 0;  // overflow reset
+    }
   }
 
-  cmd.position = forward ? 1.0f : 0.0f;
-  steering_wheel.SetPosition(cmd, &fmt);  // keep sending
-  delay(5);  // 200 Hz
+  // 10ms control loop using most recent teacher inputs
+  static uint32_t last_cmd_ms = 0;
+  const uint32_t now = millis();
+  if (now - last_cmd_ms >= CONTROL_LOOP_MS) {
+    last_cmd_ms = now;
+
+    // If nothing has been received yet, do nothing
+    if (!have_input)
+      return;
+
+    // If no new data has been received, stop the motor
+    if (now - last_rx_ms > RX_TIMEOUT_MS)
+    {
+      steering_wheel.SetStop();
+      return;
+    }
+
+    const float sw_pos = latest_steer * TEACH_VAL_TO_REVS;
+    commandPositions(sw_pos);
+  }
 }
+
+
+/*
+// TEST CODE - commands motor to go forward and back every 2 seconds
+    if (millis() - lastToggle > 2000)
+    {
+      forward = !forward;
+      lastToggle = millis();
+      printLocalEncoders();
+    }
+
+    float sw_pos = forward ? (STEER_CENTRE + 0.5f) : (STEER_CENTRE - 0.5f);
+    commandPositions(sw_pos);
+*/
