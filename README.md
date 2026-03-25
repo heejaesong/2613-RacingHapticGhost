@@ -3,7 +3,7 @@ Jordan Werstiuk, Heejae Song, Matteo Cappellano
 
 ENPH459, Jan-Apr 2026
 
-## Operation Instructions
+## Firmware + Hardware Operation Instructions
 These are the steps required to get one of the motors moving and being controlled by the ESP, as of 25/3 with the breadboard testing setup.
 
 1. Use the LiPo voltage tester to ensure none of the 6 cells are below 3.5V. The leftmost pin of the tester connects into the black wire side of the LiPo connector. It will beep loudly when plugged in.
