@@ -1,70 +1,82 @@
-import vgamepad as vg
+ # run "pip install pysdl2 pysdl2-dll" in terminal to download
+import sdl2
 import serial
 import time
-     
-# 1. Initialize the Virtual Xbox 360 Controller
-gamepad = vg.VX360Gamepad()
 
-# 2. Setup Serial (Ensure your Arduino is plugged in and Serial Monitor is CLOSED)
-# Replace 'COM3' with your actual port
-print("Script started")
+print("imports ok")
+
+# Initiate serial connection
 try:
-    ser = serial.Serial('COM4', 115200, timeout=0.01)
-    print("Successfully connected to Arduino.")
+    # Change COM port by trial and error
+    ser = serial.Serial('COM3', 115200, timeout=0.01)
+    print("Successfully connected to serial.")
 except Exception as e:
     print(f"Could not connect: {e}")
     exit()
 
-print("Virtual Xbox Controller is live. Press Ctrl+C to exit.")
+# Initiate SDL2 API to interface with HID devices
+sdl2.SDL_Init(sdl2.SDL_INIT_JOYSTICK)
+
+# Get number of joysticks visible to computer
+# Only one joystick (-x: left, +x: right, -y: throttle, +y: brake)
+num_joysticks = sdl2.SDL_NumJoysticks()
+
+print("Joysticks: " ,num_joysticks)
+
+# Open joystick for use
+joystick = sdl2.SDL_JoystickOpen(0)
+
+# Number of axes on joystick
+num_axes = sdl2.SDL_JoystickNumAxes(joystick)
+
+# Initialize data values
+steering_wheel = 0
+throttle = 0
+brake = 0
+
+# Initialize loop delay time
+freq = 50 #Hz
+delay = 1/freq
 
 while True:
-    try:
-        if ser.in_waiting > 0:
-            # Read and parse the data: "Steering,Accel,Button"
-            line = ser.readline().decode('ascii').strip()
-            data = line.split(',')
+    # Update position data
+    sdl2.SDL_PumpEvents()
 
-            if len(data) == 2:
-                # Convert strings to integers
-                raw_steer = int(data[0])  # 0 to 1023
-                raw_accel = int(data[1])  # 0 to 1023
-                # raw_btn   = int(data[2])  # 0 or 1
+    # Initialize position array
+    angles = []
 
-                # 3. MAPPING LOGIC
-                # Steering: Map 0-1023 to -1.0 (Left) to 1.0 (Right)
-                # Formula: (value / half_of_max) - 1
-                steer_val = (raw_steer / 511.5) - 1.0
-                
-                # --- ACCELERATION (Forward Only) ---
-                # If stick is forward (raw_accel < 512)
-                if raw_accel < 512:
-                    # Map 512 (center) to 0 (top) -> 0.0 to 1.0
-                    accel_val = (512 - raw_accel) / 512.0
-                else:
-                    # Stick is centered or backward
-                    accel_val = 0.0
+    # Iterate through both axes and add to array
+    for axis in range(num_axes):
+        axis_angle = sdl2.SDL_JoystickGetAxis(joystick, axis)
+        angles.append(axis_angle)
+    
+    # Normalize steering angle
+    # -1.0 -> approximately 110 degrees counterclockwise
+    # 1.0 -> approximately 110 degrees clockwise
+    steering_wheel = angles[0] / 32768
 
-                # print(f"Steer: {steer_val:.2f}, Accel: {accel_val:.2f}")
+    # Normalize throttle and brake angles
+    # Centre of axis found to be ~-216 via testing
+    # Create deadzone of -500 to 0
+    # 1.0 -> full throttle and brake
+    if(angles[1] < -500) :
+        throttle = -(angles[1] + 216.0) / 32552
+        brake = 0
+    elif (angles[1] > 0) :
+        brake = (angles[1] + 216.0) / 32983
+        throttle = 0
+    else :
+        brake = 0
+        throttle = 0
 
-                # 4. UPDATE VIRTUAL GAMEPAD
-                # Set Left Stick X-axis for steering
-                gamepad.left_joystick_float(x_value_float=steer_val, y_value_float=0.0)
-                
-                # Set Right Trigger for gas
-                gamepad.right_trigger_float(value_float=accel_val)
+    # Send message over serial with 3 decimals of precision
+    precision = 3
+    serial_message = f"{steering_wheel:.{precision}f},{throttle:.{precision}f},{brake:.{precision}f}\n"
+    message_binary = serial_message.encode('utf-8')
+    ser.write(message_binary)
 
-                # Set 'A' Button for the joystick click
-                # if raw_btn == 1:
-                    # gamepad.press_button(button=vg.XUSB_BUTTON.XUSB_GAMEPAD_A)
-                # else:
-                    # gamepad.release_button(button=vg.XUSB_BUTTON.XUSB_GAMEPAD_A)
-
-                # Send the update to Windows
-                gamepad.update()
-
-    except KeyboardInterrupt:
-        print("\nClosing Bridge...")
-        break
-    except Exception as e:
-        # Ignore minor serial glitches
-        continue
+    # Confirm message that has been sent
+    print(serial_message)
+    
+    # Delay
+    time.sleep(delay)
