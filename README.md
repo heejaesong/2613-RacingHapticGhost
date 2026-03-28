@@ -3,7 +3,18 @@ Jordan Werstiuk, Heejae Song, Matteo Cappellano
 
 ENPH459, Jan-Apr 2026
 
-## Firmware + Hardware Operation Instructions
+## Mirroring Instructions - MARCH 28th
+1. Plug the Logitech G25 into a power outlet, and the USB into a laptop.
+2. Use the LiPo voltage tester to ensure none of the 6 cells are below 3.5V. The leftmost pin of the tester connects into the black wire side of the LiPo connector. It will beep loudly when plugged in.
+3. With the LiPo still unplugged from the motor, ensure the connector coming out of the grey block on the SPI to CAN-FD adapter is plugged into the CAN connector on the Moteus controller. It is the white connector located on the same side as the only yellow connector on the board.
+4. Plug the ESP into the USB port on the laptop. It will automatically start running whatever code was last flashed. Note that the ESP has two USB-C ports, and the one on the right side (when looking at the MCU with the text right side up) must be used.
+5. If you want to flash new code, open ArduinoIDE, and either open the file you want, or copy and paste code from GitHub into the editor. You must select the right board and port: ESP32 Dev Module and COM_ (the IDE might automatically detect it, you can also check in Device Manager). Click the Upload button (icon is arrow pointing to the right) in the top left corner of the IDE.
+6. Connect the LiPo battery.
+7. If you don't have it already, download the file `main.py` from the repository (under `2613-RacingHapticGhost/Software/src/main.py`).
+8. In a CLI, navigate to the directory `main.py` is in, and run it by entering `python main.py`
+9. To end the mirroring, stop the script from running by pressing `Ctrl+C`, and then unplug the LiPo. To resume mirroring, once again connect the LiPo, then start running the script.
+
+## Firmware + Hardware Operation Instructions - MARCH 25th
 These are the steps required to get one of the motors moving and being controlled by the ESP, as of 25/3 with the breadboard testing setup.
 
 1. Use the LiPo voltage tester to ensure none of the 6 cells are below 3.5V. The leftmost pin of the tester connects into the black wire side of the LiPo connector. It will beep loudly when plugged in.
