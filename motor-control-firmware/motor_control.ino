@@ -13,11 +13,13 @@ Student MCU firmware.
 #define BRAKE_PEDAL_ID    99 // TODO: Set to ID of the other Moteus controller
 
 #define STEER_CENTRE      -0.3f
-#define TEACH_VAL_TO_REVS 110.0f / 360.0f
+#define STEER_VAL_TO_REVS 110.0f / 360.0f
+#define ACCEL_VAL_TO_REVS   20.0f / 360.0f
+#define BRAKE_VAL_TO_REVS   20.0f / 360.0f
 
-// Increasing limits further leads to possibility of overshoot
-#define VELOCITY_LIM     3.0f
-#define ACCELERATION_LIM 6.0f
+// Increasing the limits further might genuinely endanger the student - especially if they are holding the wheel tightly
+#define VELOCITY_LIM     50.0f
+#define ACCELERATION_LIM 25.0f
 
 #define CONTROL_LOOP_MS 10
 
@@ -27,14 +29,20 @@ Student MCU firmware.
 static constexpr ACAN2517FDSettings::Oscillator kCanOsc =
   ACAN2517FDSettings::OSC_40MHz;
 
-// SPI pins:
-static constexpr int PIN_SPI_SCK = 12;   // Clock
-static constexpr int PIN_SPI_MOSI = 11;  // TX/SDI
-static constexpr int PIN_SPI_MISO = 13;  // RX/SDO
+// SPI bus pins
+static constexpr int PIN_SPI_SCK = 12;   // Shared clock
+static constexpr int PIN_SPI_MOSI = 11;  // Shared TX/SDI
+static constexpr int PIN_SPI_MISO = 13;  // Shared RX/SDO
 
-// MCP2517FD pins:
-static constexpr int PIN_CAN_CS = 10;   // Chip select
-static constexpr int PIN_CAN_INT = 9;   // Interrupt from MCP2517FD
+// MCP2517FD pins
+static constexpr int PIN_CAN1_CS = 10;  // Chip select for adapter 1
+static constexpr int PIN_CAN1_INT = 9;  // Interrupt from adapter 1
+
+static constexpr int PIN_CAN2_CS  = 5; // Chip select for adapter 2
+static constexpr int PIN_CAN2_INT = 6; // Interrupt from adapter 2
+
+// static constexpr int PIN_CAN3_CS  = 7; // Chip select for adapter 3
+// static constexpr int PIN_CAN3_INT = 8; // Interrupt from adapter 3
 
 // Serial comms with laptop
 static char lineBuf[96];
@@ -51,23 +59,25 @@ static bool forward = true;
 static uint32_t lastToggle = 0;
 
 // CAN and Moteus objects
-ACAN2517FD can(PIN_CAN_CS, SPI, PIN_CAN_INT);
+ACAN2517FD can1(PIN_CAN1_CS, SPI, PIN_CAN1_INT);
+ACAN2517FD can2(PIN_CAN2_CS, SPI, PIN_CAN2_INT);
+// ACAN2517FD can3(PIN_CAN3_CS, SPI, PIN_CAN3_INT);
 
-Moteus steering_wheel(can, []() {
+Moteus steering_wheel(can1, []() {
   Moteus::Options o;
   o.id = STEERING_WHEEL_ID;
   return o;
 }());
-Moteus accel_pedal(can, []() {
+Moteus accel_pedal(can2, []() {
   Moteus::Options o;
   o.id = ACCEL_PEDAL_ID;
   return o;
 }());
-Moteus brake_pedal(can, []() {
-  Moteus::Options o;
-  o.id = BRAKE_PEDAL_ID;
-  return o;
-}());
+// Moteus brake_pedal(can3, []() {
+//   Moteus::Options o;
+//   o.id = BRAKE_PEDAL_ID;
+//   return o;
+// }());
 
 Moteus::PositionMode::Command sw_cmd;
 Moteus::PositionMode::Format sw_fmt;
@@ -75,8 +85,8 @@ Moteus::PositionMode::Format sw_fmt;
 Moteus::PositionMode::Command acl_cmd;
 Moteus::PositionMode::Format acl_fmt;
 
-Moteus::PositionMode::Command brk_cmd;
-Moteus::PositionMode::Format brk_fmt;
+// Moteus::PositionMode::Command brk_cmd;
+// Moteus::PositionMode::Format brk_fmt;
 
 static bool parseTeacherInputs(const char* s, float &steer, float &accel, float &brake)
 {
@@ -97,7 +107,15 @@ static bool parseTeacherInputs(const char* s, float &steer, float &accel, float 
 
 static void setupCan()
 {
-  SPI.begin(PIN_SPI_SCK, PIN_SPI_MISO, PIN_SPI_MOSI, PIN_CAN_CS);
+  pinMode(PIN_CAN1_CS, OUTPUT); digitalWrite(PIN_CAN1_CS, HIGH);
+  pinMode(PIN_CAN2_CS, OUTPUT); digitalWrite(PIN_CAN2_CS, HIGH);
+  // pinMode(PIN_CAN3_CS, OUTPUT); digitalWrite(PIN_CAN3_CS, HIGH);
+
+  pinMode(PIN_CAN1_INT, INPUT_PULLUP);
+  pinMode(PIN_CAN2_INT, INPUT_PULLUP);
+  // pinMode(PIN_CAN3_INT, INPUT_PULLUP);
+
+  SPI.begin(PIN_SPI_SCK, PIN_SPI_MISO, PIN_SPI_MOSI);
 
   ACAN2517FDSettings settings(
     kCanOsc,
@@ -109,16 +127,38 @@ static void setupCan()
   settings.mDriverTransmitFIFOSize = 8;
   settings.mDriverReceiveFIFOSize = 32;
 
-  const uint32_t err = can.begin(settings, [] {
-    can.isr();
+  const uint32_t err1 = can1.begin(settings, [] {
+    can1.isr();
   });
-  if (err != 0)
+  if (err1 != 0)
   {
-    Serial.print("CAN begin failed, err=0x");
-    Serial.println(err, HEX);
+    Serial.print("CAN1 (steering wheel) begin failed, err=0x");
+    Serial.println(err1, HEX);
     while (1)
       delay(1000);
   }
+  
+  const uint32_t err2 = can2.begin(settings, [] {
+    can2.isr();
+  });
+  if (err2 != 0)
+  {
+    Serial.print("CAN2 (accel pedal) begin failed, err=0x");
+    Serial.println(err2, HEX);
+    while (1)
+      delay(1000);
+  }
+
+  // const uint32_t err3 = can3.begin(settings, [] {
+  //   can3.isr();
+  // });
+  // if (err3 != 0)
+  // {
+  //   Serial.print("CAN3 (brake pedal) begin failed, err=0x");
+  //   Serial.println(err3, HEX);
+  //   while (1)
+  //     delay(1000);
+  // }
 }
 
 static void setupMoteusFormat()
@@ -135,37 +175,36 @@ static void setupMoteusFormat()
   acl_cmd.velocity_limit = VELOCITY_LIM;
   acl_cmd.accel_limit = ACCELERATION_LIM;
 
-  brk_fmt.velocity_limit = Moteus::kFloat;
-  brk_fmt.accel_limit = Moteus::kFloat;
+  // brk_fmt.velocity_limit = Moteus::kFloat;
+  // brk_fmt.accel_limit = Moteus::kFloat;
 
-  brk_cmd.velocity_limit = VELOCITY_LIM;
-  brk_cmd.accel_limit = ACCELERATION_LIM;
+  // brk_cmd.velocity_limit = VELOCITY_LIM;
+  // brk_cmd.accel_limit = ACCELERATION_LIM;
 }
 
-static void commandPositions(float sw_pos)
+static void commandPositions(float sw_pos, float acl_pos, float brk_pos)
 {
   sw_cmd.position = STEER_CENTRE + sw_pos;
   steering_wheel.SetPosition(sw_cmd, &sw_fmt);
-  // cmd.position = p2;
-  // accel_pedal.SetPosition(acl_cmd, &acl_fmt);
-  // cmd.position = p3;
+  acl_cmd.position = acl_pos;
+  accel_pedal.SetPosition(acl_cmd, &acl_fmt);
+  // brk_cmd.position = brk_pos;
   // brake_pedal.SetPosition(brk_cmd, &brk_fmt);
 }
 
-static void printLocalEncoders()
+static void printMotorSatuses()
 {
   const auto &a = steering_wheel.last_result().values;
   const auto &b = accel_pedal.last_result().values;
-  const auto &c = brake_pedal.last_result().values;
+  // const auto &c = brake_pedal.last_result().values;
 
   Serial.print("STEERING WHEEL: mode="); Serial.print((int)a.mode);
   Serial.print(" pos="); Serial.print(a.position);
   Serial.print(" fault="); Serial.println((int)a.fault);
 
-  // TODO: Uncomment based on which motors are being controlled
-  // Serial.print("ACCEL PEDAL: mode="); Serial.print((int)b.mode);
-  // Serial.print(" pos="); Serial.print(b.position);
-  // Serial.print(" fault="); Serial.println((int)b.fault);
+  Serial.print("ACCEL PEDAL: mode="); Serial.print((int)b.mode);
+  Serial.print(" pos="); Serial.print(b.position);
+  Serial.print(" fault="); Serial.println((int)b.fault);
 
   // Serial.print("BRAKE PEDAL: mode="); Serial.print((int)c.mode);
   // Serial.print(" pos="); Serial.print(c.position);
@@ -186,8 +225,8 @@ void setup()
   delay(20);
   accel_pedal.SetStop();
   delay(20);
-  brake_pedal.SetStop();
-  delay(20);
+  // brake_pedal.SetStop();
+  // delay(20);
 
   Serial.println("Setup complete");
 }
@@ -233,28 +272,18 @@ void loop()
     if (!have_input)
       return;
 
-    // If no new data has been received, stop the motor
+    // If no new data has been received, stop the motors
     if (now - last_rx_ms > RX_TIMEOUT_MS)
     {
       steering_wheel.SetStop();
+      accel_pedal.SetStop();
+      // brake_pedal.SetStop();
       return;
     }
 
-    const float sw_pos = latest_steer * TEACH_VAL_TO_REVS;
-    commandPositions(sw_pos);
+    const float sw_pos  = latest_steer * STEER_VAL_TO_REVS;
+    const float acl_pos = latest_accel * ACCEL_VAL_TO_REVS;
+    const float brk_pos = latest_brake * BRAKE_VAL_TO_REVS;
+    commandPositions(sw_pos, acl_pos, brk_pos);
   }
 }
-
-
-/*
-// TEST CODE - commands motor to go forward and back every 2 seconds
-    if (millis() - lastToggle > 2000)
-    {
-      forward = !forward;
-      lastToggle = millis();
-      printLocalEncoders();
-    }
-
-    float sw_pos = forward ? (STEER_CENTRE + 0.5f) : (STEER_CENTRE - 0.5f);
-    commandPositions(sw_pos);
-*/
