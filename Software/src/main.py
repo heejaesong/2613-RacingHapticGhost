@@ -9,7 +9,7 @@ print("imports ok")
 # Initiate serial connection
 try:
     # Change COM port by trial and error
-    ser = serial.Serial('COM3', 115200, timeout=0.01)
+    ser = serial.Serial('COM10', 115200, timeout=0.01)
     print("Successfully connected to serial.")
 except Exception as e:
     print(f"Could not connect: {e}")
@@ -36,7 +36,7 @@ throttle = 0
 brake = 0
 
 # Initialize loop delay time
-freq = 50 #Hz
+freq = 60 #Hz
 delay = 1/freq
 
 # Path to the file written by the AC app
@@ -119,7 +119,7 @@ while True:
     ser.write(message_binary)
 
     # Confirm message that has been sent
-    print(serial_message + ", Source: " + source)
+    # print(serial_message + ", Source: " + source)
     
     # Delay
     time.sleep(delay)
