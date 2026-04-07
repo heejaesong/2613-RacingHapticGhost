@@ -9,23 +9,34 @@ Student MCU firmware.
 #include <Moteus.h>
 
 #define STEERING_WHEEL_ID 1
-#define ACCEL_PEDAL_ID    6
-#define BRAKE_PEDAL_ID    99 // TODO: Set to ID of the other Moteus controller
+#define ACCEL_PEDAL_ID    4
+#define BRAKE_PEDAL_ID    6
 
 #define STEER_CENTRE      -0.3f
 #define STEER_VAL_TO_REVS 110.0f / 360.0f
-#define ACCEL_VAL_TO_REVS   20.0f / 360.0f
-#define BRAKE_VAL_TO_REVS   20.0f / 360.0f
+#define STEER_MAX_POS_VAL 0.2f
+#define STEER_MIN_POS_VAL -0.8f
+
+#define ACCEL_MAX_POS_VAL 0.23f
+#define ACCEL_MIN_POS_VAL -0.06f
+#define ACCEL_RESTING_POS_VAL -0.06f
+
+// #define BRAKE_MAX_POS_VAL 0.30f
+// #define BRAKE_MIN_POS_VAL 0.01f
+// #define BRAKE_RESTING_POS_VAL 0.30f
 
 // Increasing the limits further might genuinely endanger the student - especially if they are holding the wheel tightly
-#define VELOCITY_LIM     50.0f
-#define ACCELERATION_LIM 25.0f
+#define VELOCITY_LIM_STEER     50.0f
+#define ACCELERATION_LIM_STEER 25.0f
+
+#define VELOCITY_LIM_PEDALS     50.0f
+#define ACCELERATION_LIM_PEDALS 30.0f
 
 #define CONTROL_LOOP_MS 10
 
 #define RX_TIMEOUT_MS 200
 
-// Will not work if not set to 40MHz (characteristic of the SPI to CAN-FD adapter)
+// Oscillator frequency of the CAN Breakout Board is 40MHz
 static constexpr ACAN2517FDSettings::Oscillator kCanOsc =
   ACAN2517FDSettings::OSC_40MHz;
 
@@ -166,20 +177,20 @@ static void setupMoteusFormat()
   sw_fmt.velocity_limit = Moteus::kFloat;
   sw_fmt.accel_limit = Moteus::kFloat;
 
-  sw_cmd.velocity_limit = VELOCITY_LIM;
-  sw_cmd.accel_limit = ACCELERATION_LIM;
+  sw_cmd.velocity_limit = VELOCITY_LIM_STEER;
+  sw_cmd.accel_limit = ACCELERATION_LIM_STEER;
 
   acl_fmt.velocity_limit = Moteus::kFloat;
   acl_fmt.accel_limit = Moteus::kFloat;
 
-  acl_cmd.velocity_limit = VELOCITY_LIM;
-  acl_cmd.accel_limit = ACCELERATION_LIM;
+  acl_cmd.velocity_limit = VELOCITY_LIM_PEDALS;
+  acl_cmd.accel_limit = ACCELERATION_LIM_PEDALS;
 
   // brk_fmt.velocity_limit = Moteus::kFloat;
   // brk_fmt.accel_limit = Moteus::kFloat;
 
-  // brk_cmd.velocity_limit = VELOCITY_LIM;
-  // brk_cmd.accel_limit = ACCELERATION_LIM;
+  // brk_cmd.velocity_limit = VELOCITY_LIM_PEDALS;
+  // brk_cmd.accel_limit = ACCELERATION_LIM_PEDALS;
 }
 
 static void commandPositions(float sw_pos, float acl_pos, float brk_pos)
@@ -281,9 +292,26 @@ void loop()
       return;
     }
 
-    const float sw_pos  = latest_steer * STEER_VAL_TO_REVS;
-    const float acl_pos = latest_accel * ACCEL_VAL_TO_REVS;
-    const float brk_pos = latest_brake * BRAKE_VAL_TO_REVS;
+    float sw_pos  = latest_steer * STEER_VAL_TO_REVS;
+    if (sw_pos > STEER_MAX_POS_VAL)
+      sw_pos = STEER_MAX_POS_VAL;
+    else if (sw_pos < STEER_MIN_POS_VAL)
+      sw_pos = STEER_MIN_POS_VAL;
+
+    float acl_pos = ACCEL_RESTING_POS_VAL + latest_accel * (ACCEL_MAX_POS_VAL - ACCEL_MIN_POS_VAL);
+    if (acl_pos > ACCEL_MAX_POS_VAL)
+      acl_pos = ACCEL_MAX_POS_VAL;
+    else if (acl_pos < ACCEL_MIN_POS_VAL)
+      acl_pos = ACCEL_MIN_POS_VAL;
+
+    float brk_pos = 0; // PLACEHOLDER - REMOVE THIS LINE
+    // float brk_pos = BRAKE_RESTING_POS_VAL - latest_brake * (BRAKE_MAX_POS_VAL - BRAKE_MIN_POS_VAL);
+    // if (brk_pos > BRAKE_MAX_POS_VAL)
+    //   brk_pos = BRAKE_MAX_POS_VAL;
+    // else if (brk_pos < BRAKE_MIN_POS_VAL)
+    //   brk_pos = BRAKE_MIN_POS_VAL;
+
     commandPositions(sw_pos, acl_pos, brk_pos);
+    Serial.println(acl_pos);
   }
 }
