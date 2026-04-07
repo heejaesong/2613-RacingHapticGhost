@@ -42,29 +42,41 @@ delay = 1/freq
 # Path to the file written by the AC app
 AC_STATE_FILE = r"C:/Program Files (x86)/Steam/steamapps/common/assettocorsa/apps/python/RacingHapticGhost/ac_state.txt"
 
+last_is_live = 1
+last_ac_steering = 0.0
+last_ac_throttle = 0.0
+last_ac_brake = 0.0
+
 # Get live status and telemetry values from state file
+
 def ac_state():
+    global last_is_live, last_ac_steering, last_ac_throttle, last_ac_brake
+
     try:
         if not os.path.exists(AC_STATE_FILE):
-            return 1, 0.0, 0.0, 0.0
+            return last_is_live, last_ac_steering, last_ac_throttle, last_ac_brake
 
-        f = open(AC_STATE_FILE, "r")
-        line = f.readline().strip()
-        f.close()
+        with open(AC_STATE_FILE, "r") as f:
+            line = f.readline().strip()
 
         parts = line.split(",")
         if len(parts) != 4:
-            return 1, 0.0, 0.0, 0.0
+            return last_is_live, last_ac_steering, last_ac_throttle, last_ac_brake
 
         is_live = int(parts[0])
         steering = float(parts[1])
         throttle = float(parts[2])
         brake = float(parts[3])
 
+        last_is_live = is_live
+        last_ac_steering = steering
+        last_ac_throttle = throttle
+        last_ac_brake = brake
+
         return is_live, steering, throttle, brake
 
     except:
-        return 1, 0.0, 0.0, 0.0
+        return last_is_live, last_ac_steering, last_ac_throttle, last_ac_brake
 
 while True:
     # Update position data
@@ -119,7 +131,7 @@ while True:
     ser.write(message_binary)
 
     # Confirm message that has been sent
-    # print(serial_message + ", Source: " + source)
+    print(serial_message)
     
     # Delay
     time.sleep(delay)
