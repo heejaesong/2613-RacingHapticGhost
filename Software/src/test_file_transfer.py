@@ -1,6 +1,16 @@
 import serial
 import time
 import os
+import serial
+
+# Initiate serial connection
+try:
+    # Change COM port by trial and error
+    ser = serial.Serial('COM10', 115200, timeout=0.01)
+    print("Successfully connected to serial.")
+except Exception as e:
+    print(f"Could not connect: {e}")
+    exit()
 
 # Path to the file written by the AC app
 AC_STATE_FILE = r"C:/Program Files (x86)/Steam/steamapps/common/assettocorsa/apps/python/RacingHapticGhost/ac_state.txt"
@@ -45,7 +55,7 @@ while True:
     precision = 3
     serial_message = f"{steering_out:.{precision}f},{throttle_out:.{precision}f},{brake_out:.{precision}f}\n"
     message_binary = serial_message.encode('utf-8')
-    # ser.write(message_binary)
+    ser.write(message_binary)
 
     # Confirm message that has been sent
     print(serial_message + ", Source: " + source)
