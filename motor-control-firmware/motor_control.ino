@@ -8,6 +8,8 @@ Student MCU firmware.
 #include <ACAN2517FD.h>
 #include <Moteus.h>
 
+#define USE_POSITION_COMMANDS 1 // 1 = position commands (Moteus PID control), 0 = torque commands ('manual' ESP P control)
+
 #define STEERING_WHEEL_ID 1
 #define ACCEL_PEDAL_ID    4
 #define BRAKE_PEDAL_ID    6
@@ -17,13 +19,7 @@ Student MCU firmware.
 #define STEER_MAX_POS_VAL 0.2f
 #define STEER_MIN_POS_VAL -0.8f
 
-#define ACCEL_MAX_POS_VAL 0.23f
-#define ACCEL_MIN_POS_VAL -0.06f
-#define ACCEL_RESTING_POS_VAL -0.06f
-
-#define BRAKE_MAX_POS_VAL 0.30f
-#define BRAKE_MIN_POS_VAL 0.01f
-#define BRAKE_RESTING_POS_VAL 0.30f
+#define PEDALS_POS_RANGE 0.29f
 
 // Increasing the limits further might genuinely endanger the student - especially if they are holding the wheel tightly
 #define VELOCITY_LIM_STEER     50.0f
@@ -31,6 +27,8 @@ Student MCU firmware.
 
 #define VELOCITY_LIM_PEDALS     50.0f
 #define ACCELERATION_LIM_PEDALS 30.0f
+
+#define KP 1
 
 #define CONTROL_LOOP_MS 10
 
@@ -59,15 +57,20 @@ static constexpr int PIN_CAN3_INT = 8; // Interrupt from adapter 3
 static char lineBuf[96];
 static size_t lineLen = 0;
 
+// Positions of pedals (for reset if belt slipping occurs)
+float ACCEL_MAX_POS_VAL; // 0.23f
+float ACCEL_MIN_POS_VAL; // -0.06f
+float ACCEL_RESTING_POS_VAL; // -0.06f
+
+float BRAKE_MAX_POS_VAL; // 0.30f
+float BRAKE_MIN_POS_VAL; // 0.01f
+float BRAKE_RESTING_POS_VAL; // 0.30f
+
 // Holds the most recently received teacher inputs
 static float latest_steer = 0.0f;
-static float latest_accel   = 0.0f;
-static float latest_brake   = 0.0f;
-static bool  have_input   = false;
-
-// TODO: Remove these testing variables once ready
-static bool forward = true;
-static uint32_t lastToggle = 0;
+static float latest_accel = 0.0f;
+static float latest_brake = 0.0f;
+static bool have_input = false;
 
 // CAN and Moteus objects
 ACAN2517FD can1(PIN_CAN1_CS, SPI, PIN_CAN1_INT);
@@ -124,6 +127,20 @@ static bool parseTeacherInputs(const char* s, float &steer, float &accel, float 
   brake = strtof(end + 1, &end);
 
   return true;
+}
+
+static void setPedalPositions()
+{
+  const auto &acl_vals = accel_pedal.last_result().values;
+  const auto &brk_vals = brake_pedal.last_result().values;
+
+  ACCEL_MAX_POS_VAL = acl_vals.position;
+  ACCEL_MIN_POS_VAL = ACCEL_MAX_POS_VAL - PEDALS_POS_RANGE;
+  ACCEL_RESTING_POS_VAL = ACCEL_MIN_POS_VAL;
+
+  BRAKE_MIN_POS_VAL = brk_vals.position;
+  BRAKE_MAX_POS_VAL = BRAKE_MIN_POS_VAL + PEDALS_POS_RANGE;
+  BRAKE_RESTING_POS_VAL = BRAKE_MAX_POS_VAL;
 }
 
 static void setupCan()
@@ -183,7 +200,6 @@ static inline void serviceCan()
   f3 = g_can3_irq; g_can3_irq = false;
   interrupts();
 
-  // Service in a fixed order, each isr() does SPI, keep them serialized
   if (f1) can1.isr();
   if (f2) can2.isr();
   if (f3) can3.isr();
@@ -224,6 +240,11 @@ static void commandPositions(float sw_pos, float acl_pos, float brk_pos)
   brake_pedal.SetPosition(brk_cmd, &brk_fmt);
 }
 
+static void commandTorques(float sw_tq, float acl_tq, float brk_tq)
+{
+  // sw_cmd.
+}
+
 static void printMotorSatuses()
 {
   const auto &a = steering_wheel.last_result().values;
@@ -245,6 +266,16 @@ static void printMotorSatuses()
   Serial.println();
 }
 
+static void getStudentPositions(float &sw_pos, float &acl_pos, float &brk_pos) {
+  const auto &sw_vals = steering_wheel.last_result().values;
+  const auto &acl_vals = accel_pedal.last_result().values;
+  const auto &brk_vals = brake_pedal.last_result().values;
+
+  sw_pos = sw_vals.position;
+  acl_pos = acl_vals.position;
+  brk_pos = brk_vals.position;
+}
+
 void setup()
 {
   Serial.begin(115200);
@@ -259,6 +290,14 @@ void setup()
   delay(20);
   brake_pedal.SetStop();
   delay(20);
+
+  const uint32_t t0 = millis();
+  while (millis() - t0 < 200) {
+    serviceCan();
+    delay(1);
+  }
+
+  setPedalPositions();
 
   Serial.println("Setup complete");
 }
@@ -315,25 +354,39 @@ void loop()
       return;
     }
 
-    float sw_pos  = latest_steer * STEER_VAL_TO_REVS;
-    if (sw_pos > STEER_MAX_POS_VAL)
-      sw_pos = STEER_MAX_POS_VAL;
-    else if (sw_pos < STEER_MIN_POS_VAL)
-      sw_pos = STEER_MIN_POS_VAL;
+    float des_sw_pos = latest_steer * STEER_VAL_TO_REVS;
+    if (des_sw_pos > STEER_MAX_POS_VAL)
+      des_sw_pos = STEER_MAX_POS_VAL;
+    else if (des_sw_pos < STEER_MIN_POS_VAL)
+      des_sw_pos = STEER_MIN_POS_VAL;
 
-    float acl_pos = ACCEL_RESTING_POS_VAL + latest_accel * (ACCEL_MAX_POS_VAL - ACCEL_MIN_POS_VAL);
-    if (acl_pos > ACCEL_MAX_POS_VAL)
-      acl_pos = ACCEL_MAX_POS_VAL;
-    else if (acl_pos < ACCEL_MIN_POS_VAL)
-      acl_pos = ACCEL_MIN_POS_VAL;
+    float des_acl_pos = ACCEL_RESTING_POS_VAL + latest_accel * (ACCEL_MAX_POS_VAL - ACCEL_MIN_POS_VAL);
+    if (des_acl_pos > ACCEL_MAX_POS_VAL)
+      des_acl_pos = ACCEL_MAX_POS_VAL;
+    else if (des_acl_pos < ACCEL_MIN_POS_VAL)
+      des_acl_pos = ACCEL_MIN_POS_VAL;
 
-    float brk_pos = BRAKE_RESTING_POS_VAL - latest_brake * (BRAKE_MAX_POS_VAL - BRAKE_MIN_POS_VAL);
-    if (brk_pos > BRAKE_MAX_POS_VAL)
-      brk_pos = BRAKE_MAX_POS_VAL;
-    else if (brk_pos < BRAKE_MIN_POS_VAL)
-      brk_pos = BRAKE_MIN_POS_VAL;
+    float des_brk_pos = BRAKE_RESTING_POS_VAL - latest_brake * (BRAKE_MAX_POS_VAL - BRAKE_MIN_POS_VAL);
+    if (des_brk_pos > BRAKE_MAX_POS_VAL)
+      des_brk_pos = BRAKE_MAX_POS_VAL;
+    else if (des_brk_pos < BRAKE_MIN_POS_VAL)
+      des_brk_pos = BRAKE_MIN_POS_VAL;
 
-    commandPositions(sw_pos, acl_pos, brk_pos);
+    if (USE_POSITION_COMMANDS)
+    {
+      commandPositions(des_sw_pos, des_acl_pos, des_brk_pos);
+    }
+    // else
+    // {
+    //   float sw_pos, acl_pos, brk_pos;
+    //   getStudentPositions(sw_pos, acl_pos, brk_pos);
+
+    //   sw_tq = KP * (des_sw_pos - sw_pos);
+    //   acl_tq = KP * (des_acl_pos - acl_pos);
+    //   brk_tq = KP * (des_brk_pos - brk _pos);
+    //   commandTorques(sw_tq, acl_tq, brk_tq);
+    // }
+    
     serviceCan();
   }
 }
